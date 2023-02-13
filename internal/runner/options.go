@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/projectdiscovery/fileutil"
 	"github.com/projectdiscovery/goconfig"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
+	fileutil "github.com/projectdiscovery/utils/file"
 )
 
 const (
@@ -21,6 +21,8 @@ const (
 type Options struct {
 	Resolvers         string
 	Hosts             string
+	Domains           string
+	WordList          string
 	Threads           int
 	RateLimit         int
 	Retries           int
@@ -40,6 +42,8 @@ type Options struct {
 	MX                bool
 	SOA               bool
 	TXT               bool
+	SRV               bool
+	AXFR              bool
 	JSON              bool
 	Trace             bool
 	TraceMaxRecursion int
@@ -51,8 +55,12 @@ type Options struct {
 	hasRCodes         bool
 	Resume            bool
 	resumeCfg         *ResumeCfg
-	FlushInterval     int
 	HostsFile         bool
+	Stream            bool
+	CAA               bool
+	OutputCDN         bool
+	ASN               bool
+	HealthCheck       bool
 }
 
 // ShouldLoadResume resume file
@@ -71,61 +79,77 @@ func ParseOptions() *Options {
 	flagSet := goflags.NewFlagSet()
 	flagSet.SetDescription(`dnsx is a fast and multi-purpose DNS toolkit allow to run multiple probes using retryabledns library.`)
 
-	createGroup(flagSet, "input", "Input",
-		flagSet.StringVarP(&options.Hosts, "list", "l", "", "File input with list of sub(domains)/hosts"),
+	flagSet.CreateGroup("input", "Input",
+		flagSet.StringVarP(&options.Hosts, "list", "l", "", "list of sub(domains)/hosts to resolve (file or stdin)"),
+		flagSet.StringVarP(&options.Domains, "domain", "d", "", "list of domain to bruteforce (file or comma separated or stdin)"),
+		flagSet.StringVarP(&options.WordList, "wordlist", "w", "", "list of words to bruteforce (file or comma separated or stdin)"),
 	)
 
-	createGroup(flagSet, "query", "Query",
-		flagSet.BoolVar(&options.A, "a", false, "Query A record (default)"),
-		flagSet.BoolVar(&options.AAAA, "aaaa", false, "Query AAAA record"),
-		flagSet.BoolVar(&options.CNAME, "cname", false, "Query CNAME record"),
-		flagSet.BoolVar(&options.NS, "ns", false, "Query NS record"),
-		flagSet.BoolVar(&options.TXT, "txt", false, "Query TXT record"),
-		flagSet.BoolVar(&options.PTR, "ptr", false, "Query PTR record"),
-		flagSet.BoolVar(&options.MX, "mx", false, "Query MX record"),
-		flagSet.BoolVar(&options.SOA, "soa", false, "Query SOA record"),
+	flagSet.CreateGroup("query", "Query",
+		flagSet.BoolVar(&options.A, "a", false, "query A record (default)"),
+		flagSet.BoolVar(&options.AAAA, "aaaa", false, "query AAAA record"),
+		flagSet.BoolVar(&options.CNAME, "cname", false, "query CNAME record"),
+		flagSet.BoolVar(&options.NS, "ns", false, "query NS record"),
+		flagSet.BoolVar(&options.TXT, "txt", false, "query TXT record"),
+		flagSet.BoolVar(&options.SRV, "srv", false, "query SRV record"),
+		flagSet.BoolVar(&options.PTR, "ptr", false, "query PTR record"),
+		flagSet.BoolVar(&options.MX, "mx", false, "query MX record"),
+		flagSet.BoolVar(&options.SOA, "soa", false, "query SOA record"),
+		flagSet.BoolVar(&options.AXFR, "axfr", false, "query AXFR"),
+		flagSet.BoolVar(&options.CAA, "caa", false, "query CAA record"),
 	)
 
-	createGroup(flagSet, "filters", "Filters",
-		flagSet.BoolVar(&options.Response, "resp", false, "Display DNS response"),
-		flagSet.BoolVar(&options.ResponseOnly, "resp-only", false, "Display DNS response only"),
-		flagSet.StringVarP(&options.RCode, "rc", "rcode", "", "Display DNS status code (eg. -rcode noerror,servfail,refused)"),
+	flagSet.CreateGroup("filter", "Filter",
+		flagSet.BoolVarP(&options.Response, "resp", "re", false, "display dns response"),
+		flagSet.BoolVarP(&options.ResponseOnly, "resp-only", "ro", false, "display dns response only"),
+		flagSet.StringVarP(&options.RCode, "rcode", "rc", "", "filter result by dns status code (eg. -rcode noerror,servfail,refused)"),
 	)
 
-	createGroup(flagSet, "rate-limit", "Rate-limit",
-		flagSet.IntVarP(&options.Threads, "c", "t", 100, "Number of concurrent threads to use"),
-		flagSet.IntVarP(&options.RateLimit, "rate-limit", "rl", -1, "Number of DNS request/second (disabled as default)"),
+	flagSet.CreateGroup("probe", "Probe",
+		flagSet.BoolVar(&options.OutputCDN, "cdn", false, "display cdn name"),
+		flagSet.BoolVar(&options.ASN, "asn", false, "display host asn information"),
 	)
 
-	createGroup(flagSet, "output", "Output",
-		flagSet.StringVarP(&options.OutputFile, "output", "o", "", "File to write output"),
-		flagSet.BoolVar(&options.JSON, "json", false, "Write output in JSONL(ines) format"),
+	flagSet.CreateGroup("rate-limit", "Rate-limit",
+		flagSet.IntVarP(&options.Threads, "threads", "t", 100, "number of concurrent threads to use"),
+		flagSet.IntVarP(&options.RateLimit, "rate-limit", "rl", -1, "number of dns request/second to make (disabled as default)"),
 	)
 
-	createGroup(flagSet, "debug", "Debug",
-		flagSet.BoolVar(&options.Silent, "silent", false, "Show only results in the output"),
-		flagSet.BoolVarP(&options.Verbose, "verbose", "v", false, "Verbose output"),
-		flagSet.BoolVarP(&options.Raw, "debug", "raw", false, "Display RAW DNS response"),
-		flagSet.BoolVar(&options.ShowStatistics, "stats", false, "Display stats of the running scan"),
-		flagSet.BoolVar(&options.Version, "version", false, "Show version of dnsx"),
+	flagSet.CreateGroup("output", "Output",
+		flagSet.StringVarP(&options.OutputFile, "output", "o", "", "file to write output"),
+		flagSet.BoolVar(&options.JSON, "json", false, "write output in JSONL(ines) format"),
 	)
 
-	createGroup(flagSet, "optimization", "Optimization",
-		flagSet.IntVar(&options.Retries, "retry", 1, "Number of DNS retries"),
-		flagSet.BoolVarP(&options.HostsFile, "hostsfile", "hf", false, "Parse system host file"),
-		flagSet.BoolVar(&options.Trace, "trace", false, "Perform DNS trace"),
+	flagSet.CreateGroup("debug", "Debug",
+		flagSet.BoolVarP(&options.HealthCheck, "health-check", "hc", false, "run diagnostic check up"),
+		flagSet.BoolVar(&options.Silent, "silent", false, "display only results in the output"),
+		flagSet.BoolVarP(&options.Verbose, "verbose", "v", false, "display verbose output"),
+		flagSet.BoolVarP(&options.Raw, "debug", "raw", false, "display raw dns response"),
+		flagSet.BoolVar(&options.ShowStatistics, "stats", false, "display stats of the running scan"),
+		flagSet.BoolVar(&options.Version, "version", false, "display version of dnsx"),
+	)
+
+	flagSet.CreateGroup("optimization", "Optimization",
+		flagSet.IntVar(&options.Retries, "retry", 2, "number of dns attempts to make (must be at least 1)"),
+		flagSet.BoolVarP(&options.HostsFile, "hostsfile", "hf", false, "use system host file"),
+		flagSet.BoolVar(&options.Trace, "trace", false, "perform dns tracing"),
 		flagSet.IntVar(&options.TraceMaxRecursion, "trace-max-recursion", math.MaxInt16, "Max recursion for dns trace"),
-		flagSet.IntVar(&options.FlushInterval, "flush-interval", 10, "Flush interval of output file"),
-		flagSet.BoolVar(&options.Resume, "resume", false, "Resume"),
+		flagSet.BoolVar(&options.Resume, "resume", false, "resume existing scan"),
+		flagSet.BoolVar(&options.Stream, "stream", false, "stream mode (wordlist, wildcard, stats and stop/resume will be disabled)"),
 	)
 
-	createGroup(flagSet, "configs", "Configurations",
-		flagSet.StringVarP(&options.Resolvers, "resolver", "r", "", "List of resolvers (file or comma separated)"),
-		flagSet.IntVarP(&options.WildcardThreshold, "wildcard-threshold", "wt", 5, "Wildcard Filter Threshold"),
-		flagSet.StringVarP(&options.WildcardDomain, "wildcard-domain", "wd", "", "Domain name for wildcard filtering (other flags will be ignored)"),
+	flagSet.CreateGroup("configs", "Configurations",
+		flagSet.StringVarP(&options.Resolvers, "resolver", "r", "", "list of resolvers to use (file or comma separated)"),
+		flagSet.IntVarP(&options.WildcardThreshold, "wildcard-threshold", "wt", 5, "wildcard filter threshold"),
+		flagSet.StringVarP(&options.WildcardDomain, "wildcard-domain", "wd", "", "domain name for wildcard filtering (other flags will be ignored - only json output is supported)"),
 	)
 
 	_ = flagSet.Parse()
+
+	if options.HealthCheck {
+		gologger.Print().Msgf("%s\n", DoHealthCheck(options, flagSet))
+		os.Exit(0)
+	}
 
 	// Read the inputs and configure the logging
 	options.configureOutput()
@@ -156,6 +180,55 @@ func (options *Options) validateOptions() {
 	if options.Response && options.ResponseOnly {
 		gologger.Fatal().Msgf("resp and resp-only can't be used at the same time")
 	}
+
+	if options.Retries == 0 {
+		gologger.Fatal().Msgf("retries must be at least 1")
+	}
+
+	wordListPresent := options.WordList != ""
+	domainsPresent := options.Domains != ""
+	hostsPresent := options.Hosts != ""
+
+	if hostsPresent && (wordListPresent || domainsPresent) {
+		gologger.Fatal().Msgf("list(l) flag can not be used domain(d) or wordlist(w) flag")
+	}
+
+	if wordListPresent && !domainsPresent {
+		gologger.Fatal().Msg("missing domain(d) flag required with wordlist(w) input")
+	}
+	if domainsPresent && !wordListPresent {
+		gologger.Fatal().Msgf("missing wordlist(w) flag required with domain(d) input")
+	}
+
+	// stdin can be set only on one flag
+	if argumentHasStdin(options.Domains) && argumentHasStdin(options.WordList) {
+		if options.Stream {
+			gologger.Fatal().Msgf("argument stdin not supported in stream mode")
+		}
+		gologger.Fatal().Msgf("stdin can be set for one flag")
+	}
+
+	if options.Stream {
+		if wordListPresent {
+			gologger.Fatal().Msgf("wordlist not supported in stream mode")
+		}
+		if domainsPresent {
+			gologger.Fatal().Msgf("domains not supported in stream mode")
+		}
+		if options.Resume {
+			gologger.Fatal().Msgf("resume not supported in stream mode")
+		}
+		if options.WildcardDomain != "" {
+			gologger.Fatal().Msgf("wildcard not supported in stream mode")
+		}
+		if options.ShowStatistics {
+			gologger.Fatal().Msgf("stats not supported in stream mode")
+		}
+	}
+}
+
+func argumentHasStdin(arg string) bool {
+	return arg == stdinMarker
 }
 
 // configureOutput configures the output on the screen
@@ -243,11 +316,4 @@ func (options *Options) configureResume() error {
 
 	}
 	return nil
-}
-
-func createGroup(flagSet *goflags.FlagSet, groupName, description string, flags ...*goflags.FlagData) {
-	flagSet.SetGroup(groupName, description)
-	for _, currentFlag := range flags {
-		currentFlag.Group(groupName)
-	}
 }

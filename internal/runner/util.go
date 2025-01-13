@@ -1,32 +1,27 @@
 package runner
 
 import (
-	"bufio"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	fileutil "github.com/projectdiscovery/utils/file"
 )
 
-func fileExists(fileName string) bool {
-	info, err := os.Stat(fileName)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
+const (
+	stdinMarker = "-"
+	Comma       = ","
+	NewLine     = "\n"
+)
 
 func linesInFile(fileName string) ([]string, error) {
 	result := []string{}
-	f, err := os.Open(fileName)
+	f, err := fileutil.ReadFile(fileName)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
+	for line := range f {
 		result = append(result, line)
 	}
 	return result, nil

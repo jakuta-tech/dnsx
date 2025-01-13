@@ -1,17 +1,40 @@
-# dockerhub-push pushes docker build to dockerhub automatically
-# on the creation of a new release
-name: Publish to Dockerhub on creation of a new release
-on: 
-  release:
-    types: [published]
+name: 🌥 Docker Push
+
+on:
+  workflow_run:
+    workflows: ["🎉 Release Binary"]
+    types:
+      - completed
+  workflow_dispatch:
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  docker:
+    runs-on: ubuntu-latest-16-cores
     steps:
-    - uses: actions/checkout@master
-    - name: Publish to Dockerhub Registry
-      uses: elgohr/Publish-Docker-Github-Action@master
-      with:
-        name: projectdiscovery/dnsx
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Git Checkout
+        uses: actions/checkout@v3
+
+      - name: Get Github tag
+        id: meta
+        run: |
+          curl --silent "https://api.github.com/repos/projectdiscovery/dnsx/releases/latest" | jq -r .tag_name | xargs -I {} echo TAG={} >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2 
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm
+          push: true
+          tags: projectdiscovery/dnsx:latest,projectdiscovery/dnsx:${{ steps.meta.outputs.TAG }}

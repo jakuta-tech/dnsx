@@ -21,10 +21,14 @@ func StringToRequestType(tp string) (rt uint16, err error) {
 		rt = dns.TypeSOA
 	case "PTR":
 		rt = dns.TypePTR
+	case "ANY":
+		rt = dns.TypeANY
 	case "MX":
 		rt = dns.TypeMX
 	case "TXT":
 		rt = dns.TypeTXT
+	case "SRV":
+		rt = dns.TypeSRV
 	case "AAAA":
 		rt = dns.TypeAAAA
 	default:
